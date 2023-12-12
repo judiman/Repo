@@ -1,0 +1,140 @@
+DECLARE @dbName NVARCHAR(255)
+DECLARE db_cursor CURSOR FOR
+SELECT name FROM sys.databases WHERE database_id > 4
+
+OPEN db_cursor
+FETCH NEXT FROM db_cursor INTO @dbName
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    -- 1. Backupy dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; 
+          SELECT 
+              ''' + @dbName + ''' AS DatabaseName,
+              database_name,
+              backup_start_date,
+              backup_finish_date,
+              backup_size,
+              compressed_backup_size
+          FROM msdb.dbo.backupset
+          ORDER BY backup_start_date DESC;')
+
+    -- 2. Integrity Checks dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; DBCC CHECKDB WITH NO_INFOMSGS;')
+
+    -- 3. Monitoring Performance dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; 
+          SELECT 
+              ''' + @dbName + ''' AS DatabaseName,
+              object_name,
+              counter_name,
+              cntr_value
+          FROM sys.dm_os_performance_counters
+          WHERE object_name LIKE ''%Database%'' AND counter_name IN (''Transactions/sec'', ''Batch Requests/sec'', ''User Connections'');')
+
+    -- 4. Logi Błędów dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; 
+          SELECT
+              ''' + @dbName + ''' AS DatabaseName,
+              [LogDate],
+              [ProcessInfo],
+              [Text]
+          FROM sys.fn_get_audit_file(''C:\Program Files\Microsoft SQL Server\MSSQL15.MSSQLSERVER\MSSQL\LOG\*'', NULL, NULL);')
+
+    -- 5. Space Management dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; EXEC sp_spaceused;')
+
+    -- 6. Job Execution dla wszystkich baz danych
+    EXEC('USE msdb;
+          USE [' + @dbName + ']; 
+          SELECT 
+              ''[' + @dbName + ']'' AS DatabaseName,
+              job_id,
+              name,
+              run_status,
+              run_date,
+              run_duration
+          FROM msdb.dbo.sysjobs
+          JOIN msdb.dbo.sysjobhistory
+          ON msdb.dbo.sysjobs.job_id = msdb.dbo.sysjobhistory.job_id
+          ORDER BY run_date DESC;')
+
+    -- 7. Security Audits dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; 
+          SELECT
+              ''' + @dbName + ''' AS DatabaseName,
+              name,
+              type_desc,
+              create_date,
+              modify_date
+          FROM sys.database_principals;')
+
+    -- 8. Replication Status dla wszystkich baz danych
+    EXEC('USE master;
+          USE [' + @dbName + ']; 
+          SELECT 
+              ''[' + @dbName + ']'' AS DatabaseName,
+              publication,
+              status
+          FROM distribution.dbo.MSpublications;')
+
+    -- 9. Query Performance dla wszystkich baz danych
+    EXEC('USE [' + @dbName + ']; DBCC FREEPROCCACHE;')
+
+    -- 10. System Health Check dla wszystkich baz danych
+    EXEC('USE master;
+          USE [' + @dbName + ']; 
+          SELECT
+              ''[' + @dbName + ']'' AS DatabaseName,
+              cpu_count,
+              physical_memory_kb,
+              virtual_memory_kb,
+              sqlserver_start_time
+          FROM sys.dm_os_sys_info;')
+
+    -- 11. Indeksy i Statystyki
+    EXEC('USE [' + @dbName + '];
+          SELECT 
+              t.name AS TableName,
+              i.name AS IndexName,
+              s.name AS StatisticName,
+              ps.avg_fragmentation_in_percent
+          FROM sys.indexes i
+          INNER JOIN sys.tables t ON t.object_id = i.object_id
+          INNER JOIN sys.stats s ON s.object_id = i.object_id AND s.stats_id = i.index_id
+          INNER JOIN sys.dm_db_partition_stats ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id
+          WHERE ps.index_id > 0;')
+
+    -- 12. Blokady i Zgłoszenia
+    EXEC('USE [' + @dbName + '];
+          SELECT 
+              request_session_id,
+              resource_type,
+              resource_database_id,
+              resource_associated_entity_id,
+              request_mode,
+              request_type
+          FROM sys.dm_tran_locks;')
+
+    -- 13. Zaplanowane Zadania
+    EXEC('USE msdb;
+          SELECT
+              job_id,
+              name,
+              enabled,
+              description
+          FROM dbo.sysjobs;')
+
+    -- 14. Rozmiar i Rost Bazy Danych
+    EXEC('USE [' + @dbName + '];
+          SELECT
+              name,
+              size * 8 / 1024 AS SizeMB,
+              growth * 8 / 1024 AS GrowthMB
+          FROM sys.master_files;')
+
+    FETCH NEXT FROM db_cursor INTO @dbName
+END
+
+CLOSE db_cursor
+DEALLOCATE db_cursor
